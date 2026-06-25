@@ -27,7 +27,7 @@ Tools que usa (todas de lectura):
 
 | Tool | Para qué |
 |---|---|
-| `list_issues` | Traer mis issues con `assignee="me"`, `team` Back-end. Devuelve estado, prioridad, estimación, ciclo, proyecto, labels, due date. |
+| `list_issues` | Traer mis issues con `assignee="me"`, `team` Back-end. Devuelve estado, prioridad, estimación, ciclo, proyecto, labels, due date. También `project="<nombre>"` para traer **todas** las issues de un proyecto (de todos los equipos) y ver la validación funcional. |
 | `get_issue` (`includeRelations=true`) | Detalle de una issue concreta: relaciones `Relates to`/`Blocks` (detección de soporte y bloqueos) y campos que no vengan en el listado. |
 | `list_cycles` (`type="current"`) | Fechas y número del ciclo en curso para calcular el % transcurrido y la proyección. |
 | `list_comments` | Comentarios de un issue concreto, para el barrido de @-menciones (ver "Menciones"). Es **por issue**, no global. |
@@ -115,9 +115,41 @@ Si no se cumple ninguna → **Soporte: no**. Las de soporte se resaltan porque s
 - **HOY (diario)** — lo accionable de la jornada, **con detalle por tarea**: In progress (con antigüedad vs estimación y qué hacer), Urgent/vence hoy (con el porqué), y Blocked (con a quién escalar). Cierra con un resumen de "las N cosas de hoy".
 - **CICLO (quincena = `cycle` de Linear)** — cómo va el ciclo en curso, **listando todas tus tareas**: puntos (hechos/en curso/pendientes), días hábiles y proyección, ritmo (hecho vs tiempo consumido), las pendientes en orden de ataque, en curso, las que deberías haber empezado y las ya cerradas.
 - **BACKLOG** — lo asignado fuera del ciclo actual, priorizado (compacto), más avisos de higiene (sin estimación, sin due, sin label) que incumplen las reglas de Back-end.
+- **PROYECTOS / VALIDACIÓN FUNCIONAL** — para los proyectos donde tienes trabajo, en qué punto está el resto del proyecto, en especial la validación funcional (issues del equipo Functional). Que tu core esté hecho no significa que el proyecto esté cerrado (ver sección "Estado del proyecto y validación funcional").
 - **MENCIONES** — @-menciones en comentarios que esperan respuesta tuya, para que no se pierdan (ver sección "Menciones").
 
 Cada nivel lleva su **veredicto** (🟢/🟡/🔴) y al final hay un **veredicto global**.
+
+### Estado del proyecto y validación funcional
+
+Tu trabajo de **core (BACK)** casi siempre es una pieza dentro de un **proyecto** que agrupa también la **validación funcional**, que hacen las issues del equipo **Functional** (key `FUNC-`). Que tu tarea esté `Done` **no** significa que el proyecto esté cerrado: funcional puede estar validándolo, tenerlo pendiente o ni haberlo empezado. Este bloque te da esa foto y te dice cuándo conviene **avisar a funcional**.
+
+**Cómo se obtiene.** Cada issue trae `project` / `projectId`. Para cada proyecto con tareas tuyas (Done o activas), `list_issues(project="<nombre del proyecto>")` devuelve **todas** las issues del proyecto, de **todos los equipos**. Se separan las del equipo **Functional** (`teamId 841943df-46a0-4757-ae3d-ab341e72d540`, key `FUNC`) → ése es el estado de la validación funcional.
+
+**Estados del equipo Functional** (workflow propio, distinto del de Back-end):
+
+| Estado funcional | Significa |
+|---|---|
+| `Backlog` / `Todo` | validación **pendiente**, sin empezar |
+| `Testing in DEV` (y similares "Testing…") | **validándose ahora** |
+| `Done` | validación **terminada** |
+| `Canceled` | descartada (p. ej. el `FUNC` original convertido a proyecto) |
+
+> Las issues `FUNC` "(converted to project)" en estado `Canceled` son el ticket origen que se transformó en proyecto: **ignorarlas**, no son validación pendiente.
+
+**Veredicto por proyecto y acción sugerida:**
+
+| Tu core | Funcional | Lectura | Acción |
+|---|---|---|---|
+| Done | Done | proyecto cerrado ✅ | nada |
+| Done | Testing | en validación 🔵 | vigilar por si reportan algo |
+| **Done** | **Todo / sin empezar** | **parado del lado funcional 🟡** | **avisa a funcional para saber si lo van a coger** |
+| en curso / pendiente | Testing | descoordinación 🟠 | están validando algo que aún vas a tocar; coordínate |
+| en curso / pendiente | Todo | en marcha, normal | seguir |
+
+**A quién avisar.** El `assignee` (o `createdBy`) de las issues `FUNC` del proyecto (p. ej. quien tenga la HU en `Todo`).
+
+> ⚠️ **Limitación / config.** La "validación funcional" se identifica por el **equipo Functional**. Si en algún proyecto la validación la lleva otro equipo o cambia el nombre, se ajusta en `funcional_team` del fichero de estado. Y como puede ser caro (una llamada `list_issues(project)` por proyecto), por defecto solo se miran los proyectos de tus tareas **Done o activas del ciclo**, no de todo el histórico.
 
 ### Menciones (seguimiento de @-menciones en comentarios)
 
@@ -156,10 +188,13 @@ Objetivo: que ninguna @-mención en un comentario se quede sin respuesta y pueda
 - `list_cycles(teamId, type="current")` → fechas y número del ciclo; calcular **% transcurrido** y **días hábiles restantes**.
 - Fijar "hoy" y la semana en curso.
 
+> ⚠️ **El filtro `cycle` de `list_issues` no es fiable** (`cycle="current"` y `cycle="Cycle 5"` devuelven vacío). Para saber qué issues son del ciclo, traer mis issues y **filtrar en local por `cycleId`** (el id que da `list_cycles`). El scope del ciclo **cambia dentro del ciclo**: pueden añadirte tareas a mitad (visto en vivo), así que recalcular siempre, no cachear el listado.
+
 ### Paso 1 — Recopilación (Linear, en paralelo)
 
 - `list_issues(assignee="me", team="Back-end", limit=250)` sin filtrar por estado → traer todas mis issues abiertas y clasificarlas localmente por estado. (Filtrar por estado en varias llamadas también vale; una sola llamada amplia suele bastar.) **El nombre del proyecto viene en el listado**, así que el soporte (prefijo `[SOPORTE]`) se detecta ya aquí, sin llamadas extra.
 - Solo para las **In progress** (y para confirmar bloqueos), `get_issue(id, includeRelations=true)` → `Blocks`/`Blocked by`, `stateHistory` (antigüedad en el estado) y relaciones. No hace falta para detectar soporte.
+- **Estado de proyectos / validación funcional** (ver sección dedicada): para cada proyecto distinto de tus tareas Done o activas del ciclo, `list_issues(project="<nombre>")` y separar las issues del equipo `Functional` para ver el estado de la validación. Ignorar los `FUNC` "(converted to project)" en `Canceled`.
 - Opcional: `list_issues(assignee="me", team="Back-end", state="Done", updatedAt="-P14D")` → cerradas del ciclo, como contexto del veredicto.
 - **Menciones** (ver sección "Menciones"): cachear tu `mention_handle` (`@jaime.hernandez`, vía `get_user`) y tu `user_id`; luego `list_comments` sobre el conjunto del alcance elegido (A por defecto). Quedarse con los comentarios cuyo `body` contiene tu handle, escritos por otra persona y sin respuesta tuya posterior en el hilo. Es la parte más cara en llamadas: limitar por `mention_lookback_days` y por issues activas.
 
@@ -211,6 +246,15 @@ Hechas este ciclo ({n}): BACK-142, BACK-145, BACK-139   ({pts} pt cerrados)
   • BACK-140 {título} ({pts}pt · {prioridad})  {soporte?}
 Higiene (incumplen reglas Back-end):
   • BACK-141 sin estimación   • BACK-142 sin due date   • BACK-143 sin label
+
+▶ PROYECTOS · validación funcional                          [resumen]
+  • {Proyecto A}
+      Tu core: {Done | en curso (BACK-149) | pendiente (BACK-150)}
+      Funcional: FUNC-272 Testing in DEV · FUNC-273 Todo · FUNC-274 Done   → en validación
+      → {acción: avisa a {persona} de FUNC-273 / vigilar / nada}
+  • {Proyecto B}
+      Tu core: Done   ·   Funcional: todo sin empezar  🟡
+      → tu parte está cerrada pero funcional no lo ha cogido; avisa a {persona}
 
 ▶ MENCIONES (pendientes de responder · alcance: {A/B/C})     [🟢/🟡/🔴]
   • BACK-88  hace {n} días · de {quién}
@@ -311,6 +355,14 @@ Opcional pero recomendado: cachea el `team_id` y guarda tus preferencias para no
     "title_prefixes": ["Soporte", "[Soporte]"],
     "related_via": "Relates to"
   },
+  "funcional_team": {
+    "name": "Functional",
+    "team_id": "841943df-46a0-4757-ae3d-ab341e72d540",
+    "key": "FUNC",
+    "estados_validando": ["Testing in DEV"],
+    "estados_pendiente": ["Backlog", "Todo"],
+    "estados_hecho": ["Done"]
+  },
   "ciclo_dias": 14
 }
 ```
@@ -322,6 +374,7 @@ Opcional pero recomendado: cachea el `team_id` y guarda tus preferencias para no
 - `mention_handle` — tu handle para detectar menciones en comentarios (texto plano `@handle`). Resolver con `get_user` y cachear. El tuyo es `@jaime.hernandez`.
 - `mention_scope` / `mention_lookback_days` — alcance del barrido de menciones (`"A"`, `"B"` o `"C"`) y ventana de días hacia atrás. Ver sección "Menciones".
 - `soporte` — cómo se detecta el soporte. El más fiable es `project_prefixes` (`[SOPORTE]`); el resto son señales de respaldo. Editable si cambian proyectos/estados.
+- `funcional_team` — equipo que hace la validación funcional (`Functional`/`FUNC`) y el mapeo de sus estados a validando/pendiente/hecho. Ajustar si en algún proyecto la validación la lleva otro equipo o cambian los nombres de estado.
 
 ### Calendario laboral — festivos Madrid capital (para "días hábiles")
 
